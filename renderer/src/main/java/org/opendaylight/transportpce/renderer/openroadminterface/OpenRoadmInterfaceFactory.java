@@ -88,8 +88,8 @@ public class OpenRoadmInterfaceFactory {
      * @param nodeId           node ID
      * @param logicalConnPoint logical connection point
      * @param spectrumInformation spectrum information.
-     * @return Name of the interface if successful, otherwise return null.
      * @param operationalMode operational mode name for the OCH/OTSI interface
+     * @return Name of the interface if successful, otherwise return null.
      * @throws OpenRoadmInterfaceException OpenRoadm interface exception
      */
     public String createOpenRoadmOchInterface(String nodeId, String logicalConnPoint,
