@@ -53,6 +53,7 @@ import org.opendaylight.yang.gen.v1.http.org.openroadm.network.topology.types.re
 import org.opendaylight.yang.gen.v1.http.org.openroadm.network.topology.types.rev250110.xpdr.odu.switching.pools.odu.switching.pools.NonBlockingListKey;
 import org.opendaylight.yang.gen.v1.http.org.openroadm.network.types.rev250110.OpenroadmNodeType;
 import org.opendaylight.yang.gen.v1.http.org.openroadm.network.types.rev250110.OpenroadmTpType;
+import org.opendaylight.yang.gen.v1.http.org.openroadm.network.types.rev250110.available.freq.map.AvailFreqMaps;
 import org.opendaylight.yang.gen.v1.http.org.openroadm.network.types.rev250110.available.freq.map.AvailFreqMapsKey;
 import org.opendaylight.yang.gen.v1.http.org.openroadm.network.types.rev250110.xpdr.tp.supported.interfaces.SupportedInterfaceCapability;
 import org.opendaylight.yang.gen.v1.http.org.openroadm.otn.network.topology.rev250110.Node1;
@@ -1110,27 +1111,15 @@ public class ORtoTapiTopoConversionTools {
     /**
      * Retrieves from OpenROADM tp (ROADM SRG-PP)the information on the wavelength used on the tp.
      * Returns a Map of Min and Max Frequency corresponding to the different occupied-slots low and high boundaries.
-     * @param tp OpenROADM Termination Point (ietf/openROADM topology Object),
+     * @param terminationPoint OpenROADM Termination Point (ietf/openROADM topology Object),
      */
-    public Map<Frequency, Frequency> getPPUsedWavelength(TerminationPoint tp) {
-        var tpAug = tp.augmentation(
-            org.opendaylight.yang.gen.v1.http.org.openroadm.network.topology.rev250110.TerminationPoint1.class);
-        if (tpAug == null) {
-            return new HashMap<>();
-        }
-        PpAttributes ppAtt = tpAug.getPpAttributes();
-        if (ppAtt == null) {
-            return new HashMap<>();
-        }
-        var usedWvl = ppAtt.getUsedWavelength();
-        if (usedWvl == null || usedWvl.isEmpty()) {
-            return new HashMap<>();
-        }
-        var usedWvlfirstValue = usedWvl.entrySet().iterator().next().getValue();
-        Double centFreq = usedWvlfirstValue.getFrequency().getValue().doubleValue();
-        Double width = usedWvlfirstValue.getWidth().getValue().doubleValue();
-
-        return rangeFactory.range(centFreq, width).ranges();
+    public Map<Frequency, Frequency> getPPUsedFrequencies(TerminationPoint terminationPoint) {
+        return getPP11UsedFrequencies(
+                terminationPoint.augmentation(
+                        org.opendaylight.yang.gen.v1.http.org.openroadm.network.topology
+                                .rev250110.TerminationPoint1.class
+                )
+        );
     }
 
 
@@ -1277,28 +1266,110 @@ public class ORtoTapiTopoConversionTools {
     }
 
     /**
+     * Retrieves from OpenROADM tp (ROADM SRG-PP) the information on the wavelength available on the tp.
+     * Done directly from TerminationPoint1 Augmentation.
+     * Returns a map of Min and Max Frequency corresponding to the different occupied-slots low and high boundaries.
+     * @param tp OpenROADM Termination Point (ietf/openROADM topology Object),
+     */
+    public Map<Frequency, Frequency> getPP11AvailableFrequencies(
+            org.opendaylight.yang.gen.v1.http.org.openroadm.network.topology.rev250110.TerminationPoint1 tp) {
+        if (tp == null) {
+            return Map.of();
+        }
+
+        PpAttributes ppAtt = tp.getPpAttributes();
+        if (ppAtt == null) {
+            return Map.of();
+        }
+
+        Map<AvailFreqMapsKey, AvailFreqMaps> availFreqMaps = ppAtt.getAvailFreqMaps();
+        AvailFreqMapsKey cband = new AvailFreqMapsKey(GridConstant.C_BAND);
+
+        return new SortedRange(availableRanges(availFreqMaps, cband)).ranges();
+    }
+
+    /**
+     * Computes the available frequency ranges for a given band.
+     *
+     * <p>The method expects a map of available frequency maps (typically keyed by band),
+     * retrieves the {@link AvailFreqMaps} entry for {@code bandKey} and converts
+     * it into numeric ranges.
+     *
+     * <p>If the input map is {@code null}, the key is missing, or the entry/frequency map
+     * is {@code null}, this method returns an empty map.
+     *
+     * @param avlFreqMaps map containing available frequency maps per band; may be {@code null}
+     * @param bandKey the key representing the band to extract
+     * @return a map of numeric frequency ranges (e.g., start → end), or an empty map if unavailable
+     */
+    private Map<Double, Double> availableRanges(
+            Map<AvailFreqMapsKey, AvailFreqMaps> avlFreqMaps,
+            AvailFreqMapsKey bandKey) {
+
+        if (!hasBand(avlFreqMaps, bandKey)) {
+            return Map.of();
+        }
+
+        AvailFreqMaps afm = avlFreqMaps.get(bandKey);
+        byte[] freqByteSet = Arrays.copyOf(afm.getFreqMap(), GridConstant.NB_OCTECTS);
+        return numericFrequency.availableFrequency(new AvailableGrid(freqByteSet));
+    }
+
+    /**
+     * Checks whether the provided map contains a non-null entry for {@code bandKey}
+     * and that the entry has a non-null frequency bitmap.
+     *
+     * @param avlFreqMaps map containing available frequency maps per band; may be {@code null}
+     * @param bandKey the key representing the band to validate
+     * @return {@code true} if {@code avlFreqMaps} contains a non-null {@link AvailFreqMaps}
+     */
+    private static boolean hasBand(Map<AvailFreqMapsKey, AvailFreqMaps> avlFreqMaps, AvailFreqMapsKey bandKey) {
+        if (avlFreqMaps == null) {
+            return false;
+        }
+
+        AvailFreqMaps afm = avlFreqMaps.get(bandKey);
+        return afm != null && afm.getFreqMap() != null;
+    }
+
+    /**
      * Retrieves from OpenROADM tp (ROADM SRG-PP)the information on the wavelength used on the tp.
      * Done directly from TerminationPoint1 Augmentation.
      * Returns a map of Min and Max Frequency corresponding to the different occupied-slots low and high boundaries.
      * @param tp OpenROADM Termination Point (ietf/openROADM topology Object),
      */
-    public Map<Frequency, Frequency> getPP11UsedWavelength(
+    public Map<Frequency, Frequency> getPP11UsedFrequencies(
             org.opendaylight.yang.gen.v1.http.org.openroadm.network.topology.rev250110.TerminationPoint1 tp) {
+        SortedRange sortedRange = new SortedRange();
         if (tp == null) {
             return new HashMap<>();
         }
+
+        Map<AvailFreqMapsKey, AvailFreqMaps> avlFreqMaps = new HashMap<>();
         PpAttributes ppAtt = tp.getPpAttributes();
-        if (ppAtt == null) {
-            return new HashMap<>();
+        if (ppAtt != null) {
+            avlFreqMaps = ppAtt.getAvailFreqMaps();
         }
-        var usedWvl = ppAtt.getUsedWavelength();
-        if (usedWvl == null || usedWvl.isEmpty()) {
-            return new HashMap<>();
+
+        if (avlFreqMaps != null && avlFreqMaps.keySet().toString().contains(GridConstant.C_BAND)) {
+            byte[] freqByteSet = new byte[GridConstant.NB_OCTECTS];
+
+            AvailFreqMapsKey availFreqMapsKey = new AvailFreqMapsKey(GridConstant.C_BAND);
+            freqByteSet = Arrays.copyOf(avlFreqMaps.entrySet().stream()
+                    .filter(afm -> afm.getKey().equals(availFreqMapsKey))
+                    .findFirst()
+                    .orElseThrow()
+                    .getValue()
+                    .getFreqMap(), freqByteSet.length);
+            LOG.debug("Available frequency byte set: {}", freqByteSet);
+
+            Map<Double, Double> ranges = numericFrequency.assignedFrequency(new AvailableGrid(freqByteSet));
+            LOG.debug("Used frequency ranges: {}", ranges);
+
+            sortedRange.add(new SortedRange(ranges));
         }
-        var usedWvlFirstValue = usedWvl.entrySet().iterator().next().getValue();
-        Double centFreq = usedWvlFirstValue.getFrequency().getValue().doubleValue();
-        Double width = usedWvlFirstValue.getWidth().getValue().doubleValue();
-        return rangeFactory.range(centFreq, width).ranges();
+
+        return sortedRange.ranges();
     }
 
     /**
